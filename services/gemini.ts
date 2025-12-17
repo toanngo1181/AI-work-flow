@@ -1,9 +1,5 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { AIWorkflowResponse, RiskLevel } from '../types';
-
-// Lấy API Key từ biến môi trường của Vite
-const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY; 
-const MODEL_NAME = 'gemini-1.5-flash';
 
 export const SYSTEM_INSTRUCTION = `
 Bạn là "Senior Process Architect". Nhiệm vụ:
@@ -19,29 +15,34 @@ Output JSON format only.
 `;
 
 export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse | null> => {
-  // 1. Kiểm tra Key
-  if (!API_KEY) {
-    console.error("❌ Thiếu API Key! Hãy kiểm tra file .env hoặc Vercel Settings.");
-    alert("Lỗi cấu hình: Chưa có API Key.");
+  // Fix: Access API key from process.env.API_KEY as per environment standards
+  const apiKey = process.env.API_KEY;
+  
+  if (!apiKey) {
+    console.error("❌ Thiếu API Key! Vui lòng chọn API Key trong cài đặt.");
+    alert("Lỗi cấu hình: Chưa có API Key. Hãy nhấn vào 'Cài đặt API Key' ở thanh bên.");
     return null;
   }
 
   try {
-    // 2. Khởi tạo Google AI
-    const genAI = new GoogleGenerativeAI(API_KEY);
-    const model = genAI.getGenerativeModel({ 
-        model: MODEL_NAME,
-        systemInstruction: SYSTEM_INSTRUCTION,
-    });
+    // Initialize GoogleGenAI with the new SDK
+    const ai = new GoogleGenAI({ apiKey });
     
-    // 3. Gọi AI
-    const result = await model.generateContent(text);
-    const response = await result.response;
-    const textData = response.text();
+    // Use gemini-2.5-flash as per guidelines (replacing 1.5-flash)
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: text,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        responseMimeType: 'application/json',
+      }
+    });
+
+    const textData = response.text;
 
     if (!textData) throw new Error("AI không trả lời.");
 
-    // 4. Xử lý JSON (Xóa dấu ```json nếu có)
+    // Clean and Parse JSON
     const cleanedJson = textData.replace(/```json/g, '').replace(/```/g, '').trim();
     const data = JSON.parse(cleanedJson);
     
@@ -60,7 +61,6 @@ export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse
   }
 };
 
-// --- Helper Functions giữ nguyên ---
 export const generateKPIsForNode = (label: string) => {
   return [
     { label: 'Thời gian', value: `${Math.floor(Math.random() * 60)}p` },
