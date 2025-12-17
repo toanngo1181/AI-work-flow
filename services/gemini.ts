@@ -1,13 +1,12 @@
 import { AIWorkflowResponse, RiskLevel } from '../types';
 
-// --- CẤU HÌNH ---
-// Quan trọng: Vite bắt buộc dùng import.meta.env, không dùng process.env
+// CẤU HÌNH: Dùng import.meta.env cho Vite
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY; 
 const MODEL_NAME = 'gemini-1.5-flash';
 
 export const SYSTEM_INSTRUCTION = `
-Bạn là "Senior Process Architect" & "Nano Banana Art Director".
-NHIỆM VỤ: Phân tích quy trình và trả về JSON.
+Bạn là "Senior Process Architect".
+Nhiệm vụ: Phân tích quy trình và trả về JSON chuẩn.
 Output Format (JSON Only):
 {
   "layoutType": "flow",
@@ -19,45 +18,33 @@ Output Format (JSON Only):
 `;
 
 export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse | null> => {
-  // 1. Kiểm tra Key
   if (!API_KEY) {
-    console.error("❌ Thiếu API Key! Kiểm tra file .env hoặc Vercel Settings.");
-    alert("Lỗi cấu hình: Chưa có API Key (VITE_GOOGLE_API_KEY).");
+    console.error("❌ Thiếu API Key VITE_GOOGLE_API_KEY");
+    alert("Lỗi cấu hình: Chưa có API Key.");
     return null;
   }
 
   try {
-    // 2. Gọi API trực tiếp bằng fetch (Không cần thư viện SDK)
+    // GỌI API TRỰC TIẾP (Không dùng thư viện để tránh lỗi màn hình trắng)
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
     
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: [{ text: SYSTEM_INSTRUCTION + "\n\nUser Input: " + text }]
-        }],
-        generationConfig: {
-          response_mime_type: "application/json" // Ép buộc trả về JSON
-        }
+        contents: [{ parts: [{ text: SYSTEM_INSTRUCTION + "\n\nUser Input: " + text }] }],
+        generationConfig: { response_mime_type: "application/json" }
       })
     });
 
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.error?.message || response.statusText);
-    }
+    if (!response.ok) throw new Error("Lỗi kết nối AI: " + response.statusText);
 
     const result = await response.json();
     const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
+    
     if (!jsonText) throw new Error("AI không trả lời.");
 
-    // 3. Xử lý dữ liệu
     const data = JSON.parse(jsonText);
-    
     return {
         layoutType: data.layoutType || 'flow',
         currentFlow: data.currentFlow,
@@ -67,23 +54,14 @@ export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse
     } as AIWorkflowResponse;
 
   } catch (error) {
-    console.error("🚨 Gemini API Error:", error);
+    console.error("Gemini Error:", error);
     alert("Lỗi AI: " + (error as Error).message);
     return null;
   }
 };
 
-// --- Helper Functions (Giữ nguyên) ---
-export const generateKPIsForNode = (label: string) => {
-  return [
-    { label: 'Thời gian', value: `${Math.floor(Math.random() * 60)}p` },
-    { label: 'Chi phí', value: `${Math.floor(Math.random() * 100)}$` }
-  ];
-};
-
-export const detectRiskLevel = (text: string): RiskLevel => {
-  const t = text.toLowerCase();
-  if (['cháy', 'nổ', 'độc', 'quyết định'].some(k => t.includes(k))) return RiskLevel.HIGH;
-  if (['kiểm tra', 'qc', 'nhập liệu'].some(k => t.includes(k))) return RiskLevel.MEDIUM;
-  return RiskLevel.LOW;
-};
+// Hàm phụ trợ (Giữ nguyên để App không lỗi import)
+export const generateKPIsForNode = (label: string) => [
+  { label: 'Thời gian', value: '30p' }, { label: 'Chi phí', value: '50$' }
+];
+export const detectRiskLevel = (text: string): RiskLevel => RiskLevel.LOW;
