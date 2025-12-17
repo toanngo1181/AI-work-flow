@@ -1,49 +1,62 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AIWorkflowResponse, RiskLevel } from '../types';
 
-// Lấy API Key từ biến môi trường của Vite
+// --- CẤU HÌNH ---
+// Quan trọng: Vite bắt buộc dùng import.meta.env, không dùng process.env
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY; 
 const MODEL_NAME = 'gemini-1.5-flash';
 
 export const SYSTEM_INSTRUCTION = `
-Bạn là "Senior Process Architect". Nhiệm vụ:
-1. Phân tích quy trình.
-2. Tạo 2 phiên bản: "currentFlow" (gốc) và "optimizedFlow" (tối ưu có QC/Audit).
-
-QUY TẮC OPTIMIZED FLOW:
-- Chèn node "DECISION" (Kiểm tra) sau các bước rủi ro.
-- Node DECISION rẽ 2 nhánh: "Đạt" (tiếp tục) và "Không Đạt" (quay lại sửa).
-- Node Style: DECISION=yellow, REMEDIATION=red, PROCESS=blue.
-
-Output JSON format only.
+Bạn là "Senior Process Architect" & "Nano Banana Art Director".
+NHIỆM VỤ: Phân tích quy trình và trả về JSON.
+Output Format (JSON Only):
+{
+  "layoutType": "flow",
+  "optimizationReasoning": "...",
+  "riskAnalysis": { "score": 0, "riskSummary": "..." },
+  "currentFlow": { "nodes": [], "edges": [] },
+  "optimizedFlow": { "nodes": [], "edges": [] }
+}
 `;
 
 export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse | null> => {
   // 1. Kiểm tra Key
   if (!API_KEY) {
-    console.error("❌ Thiếu API Key! Hãy kiểm tra file .env hoặc Vercel Settings.");
-    alert("Lỗi cấu hình: Chưa có API Key.");
+    console.error("❌ Thiếu API Key! Kiểm tra file .env hoặc Vercel Settings.");
+    alert("Lỗi cấu hình: Chưa có API Key (VITE_GOOGLE_API_KEY).");
     return null;
   }
 
   try {
-    // 2. Khởi tạo Google AI
-    const genAI = new GoogleGenerativeAI(API_KEY);
-    const model = genAI.getGenerativeModel({ 
-        model: MODEL_NAME,
-        systemInstruction: SYSTEM_INSTRUCTION,
-    });
+    // 2. Gọi API trực tiếp bằng fetch (Không cần thư viện SDK)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
     
-    // 3. Gọi AI
-    const result = await model.generateContent(text);
-    const response = await result.response;
-    const textData = response.text();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: SYSTEM_INSTRUCTION + "\n\nUser Input: " + text }]
+        }],
+        generationConfig: {
+          response_mime_type: "application/json" // Ép buộc trả về JSON
+        }
+      })
+    });
 
-    if (!textData) throw new Error("AI không trả lời.");
+    if (!response.ok) {
+      const errData = await response.json();
+      throw new Error(errData.error?.message || response.statusText);
+    }
 
-    // 4. Xử lý JSON (Xóa dấu ```json nếu có)
-    const cleanedJson = textData.replace(/```json/g, '').replace(/```/g, '').trim();
-    const data = JSON.parse(cleanedJson);
+    const result = await response.json();
+    const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!jsonText) throw new Error("AI không trả lời.");
+
+    // 3. Xử lý dữ liệu
+    const data = JSON.parse(jsonText);
     
     return {
         layoutType: data.layoutType || 'flow',
@@ -55,12 +68,12 @@ export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse
 
   } catch (error) {
     console.error("🚨 Gemini API Error:", error);
-    alert("Lỗi khi gọi AI: " + (error as Error).message);
+    alert("Lỗi AI: " + (error as Error).message);
     return null;
   }
 };
 
-// --- Helper Functions giữ nguyên ---
+// --- Helper Functions (Giữ nguyên) ---
 export const generateKPIsForNode = (label: string) => {
   return [
     { label: 'Thời gian', value: `${Math.floor(Math.random() * 60)}p` },
