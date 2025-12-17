@@ -1,117 +1,76 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AIWorkflowResponse, RiskLevel } from '../types';
 
+// Lấy API Key từ biến môi trường của Vite
+const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY; 
+const MODEL_NAME = 'gemini-1.5-flash';
+
 export const SYSTEM_INSTRUCTION = `
-Bạn là "Senior Process Architect" & "Nano Banana Art Director".
+Bạn là "Senior Process Architect". Nhiệm vụ:
+1. Phân tích quy trình.
+2. Tạo 2 phiên bản: "currentFlow" (gốc) và "optimizedFlow" (tối ưu có QC/Audit).
 
-NHIỆM VỤ CHÍNH:
-1. Phân tích quy trình người dùng nhập.
-2. Tạo ra 2 phiên bản: "currentFlow" (như mô tả) và "optimizedFlow" (phiên bản tối ưu hóa).
+QUY TẮC OPTIMIZED FLOW:
+- Chèn node "DECISION" (Kiểm tra) sau các bước rủi ro.
+- Node DECISION rẽ 2 nhánh: "Đạt" (tiếp tục) và "Không Đạt" (quay lại sửa).
+- Node Style: DECISION=yellow, REMEDIATION=red, PROCESS=blue.
 
-QUY TẮC TỐI ƯU HÓA (OPTIMIZED FLOW RULES) - QUAN TRỌNG:
-Trong "optimizedFlow", bạn PHẢI bổ sung cơ chế Kiểm soát chất lượng (QC/Audit) chặt chẽ:
-1. **CHÈN ĐIỂM KIỂM TRA:** Sau các bước thực thi quan trọng hoặc rủi ro cao, phải chèn một node loại "DECISION" (Ví dụ: "Kiểm tra chất lượng?", "Phê duyệt?", "Thẩm định?").
-2. **PHÂN NHÁNH LOGIC (BRANCHING):** Từ node DECISION này, bắt buộc phải tạo 2 đường dẫn (Edges):
-   - **Nhánh Đạt:** Label="Đạt" hoặc "OK", sentiment="positive". Dẫn đến bước tiếp theo.
-   - **Nhánh Không Đạt:** Label="Không Đạt" hoặc "Reject", sentiment="negative". Dẫn đến một bước xử lý lỗi.
-3. **HƯỚNG XỬ LÝ (REMEDIATION):** Nếu "Không Đạt", phải tạo ra một Node mới (Ví dụ: "Sửa lỗi", "Bổ sung hồ sơ", "Làm lại") sau đó nối ngược lại (Loop back) bước thực thi ban đầu.
-
-YÊU CẦU VỀ DỮ LIỆU & GIAO DIỆN (NANO BANANA STYLE):
-1. **Design Tokens:**
-   - Node "DECISION": colorTheme="yellow", styleVariant="outline".
-   - Node "REMEDIATION" (Sửa lỗi): colorTheme="red", styleVariant="solid".
-   - Node "START/END": colorTheme="green".
-2. **AI Image Prompt (QUAN TRỌNG):**
-   - Với mỗi Node, hãy viết một "imagePrompt" bằng tiếng Anh.
-   - Style: "3D isometric icon, claymorphism, cute, vibrant colors, white background".
-   - Ví dụ: "cute 3D robot holding a checklist, isometric, clay style, blue and white".
-
-Output Format (JSON Only):
-{
-  "layoutType": "flow" | "tree" | "cycle" | "steps" | "pyramid",
-  "optimizationReasoning": "Giải thích ngắn gọn...",
-  "riskAnalysis": { "score": 85, "riskSummary": "..." },
-  "currentFlow": { ... },
-  "optimizedFlow": { 
-     "nodes": [
-        { 
-          "id": "1", 
-          "label": "Nhập liệu", 
-          "type": "PROCESS", 
-          "riskLevel": "LOW", 
-          "design": {"colorTheme": "blue", "styleVariant": "glass"},
-          "imagePrompt": "cute 3D hands typing on a futuristic keyboard, isometric, claymorphism"
-        },
-        { 
-          "id": "2", 
-          "label": "Kiểm tra dữ liệu?", 
-          "type": "DECISION", 
-          "riskLevel": "MEDIUM", 
-          "auditStep": "Check valid format", 
-          "design": {"colorTheme": "yellow", "styleVariant": "outline"},
-          "imagePrompt": "3D magnifying glass hovering over a document, isometric, clay style, yellow theme"
-        }
-     ], 
-     "edges": [ ... ] 
-  }
-}
+Output JSON format only.
 `;
 
 export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse | null> => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    console.error("API Key not found in environment variables");
+  // 1. Kiểm tra Key
+  if (!API_KEY) {
+    console.error("❌ Thiếu API Key! Hãy kiểm tra file .env hoặc Vercel Settings.");
+    alert("Lỗi cấu hình: Chưa có API Key.");
     return null;
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: text,
-      config: {
+    // 2. Khởi tạo Google AI
+    const genAI = new GoogleGenerativeAI(API_KEY);
+    const model = genAI.getGenerativeModel({ 
+        model: MODEL_NAME,
         systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: 'application/json',
-      },
     });
-
-    const jsonText = response.text;
-    if (!jsonText) throw new Error("No response from AI");
-
-    const data = JSON.parse(jsonText);
     
-    // Ensure data matches our type structure
+    // 3. Gọi AI
+    const result = await model.generateContent(text);
+    const response = await result.response;
+    const textData = response.text();
+
+    if (!textData) throw new Error("AI không trả lời.");
+
+    // 4. Xử lý JSON (Xóa dấu ```json nếu có)
+    const cleanedJson = textData.replace(/```json/g, '').replace(/```/g, '').trim();
+    const data = JSON.parse(cleanedJson);
+    
     return {
         layoutType: data.layoutType || 'flow',
         currentFlow: data.currentFlow,
         optimizedFlow: data.optimizedFlow,
-        optimizationReasoning: data.optimizationReasoning,
-        riskAnalysis: data.riskAnalysis || { score: 50, riskSummary: 'Không có dữ liệu.' }
+        optimizationReasoning: data.optimizationReasoning || "Tối ưu hóa tiêu chuẩn.",
+        riskAnalysis: data.riskAnalysis || { score: 50, riskSummary: 'Chưa có đánh giá.' }
     } as AIWorkflowResponse;
 
   } catch (error) {
-    console.error("Gemini API Error:", error);
-    throw error;
+    console.error("🚨 Gemini API Error:", error);
+    alert("Lỗi khi gọi AI: " + (error as Error).message);
+    return null;
   }
 };
 
-export const generateKPIsForNode = (label: string): { label: string; value: string }[] => {
-  const metrics = [
+// --- Helper Functions giữ nguyên ---
+export const generateKPIsForNode = (label: string) => {
+  return [
     { label: 'Thời gian', value: `${Math.floor(Math.random() * 60)}p` },
-    { label: 'Chi phí', value: `${Math.floor(Math.random() * 100)}$` },
-    { label: 'Nhân sự', value: `${Math.floor(Math.random() * 5) + 1}` },
-    { label: 'Hiệu suất', value: `${Math.floor(Math.random() * 20) + 80}%` },
+    { label: 'Chi phí', value: `${Math.floor(Math.random() * 100)}$` }
   ];
-  return metrics.sort(() => 0.5 - Math.random()).slice(0, 2);
 };
 
 export const detectRiskLevel = (text: string): RiskLevel => {
-  const highRiskKeywords = ['hóa chất', 'nhiệt độ', 'áp suất', 'cháy', 'nổ', 'độc hại', 'điện cao thế', 'decision', 'quyết định', 'nguy hiểm', 'fail', 'lỗi', 'critical'];
-  const mediumRiskKeywords = ['kiểm tra', 'vận chuyển', 'lưu kho', 'đóng gói', 'nhập liệu', 'qc', 'audit', 'review'];
-  const lowerText = text.toLowerCase();
-  
-  if (highRiskKeywords.some(k => lowerText.includes(k))) return RiskLevel.HIGH;
-  if (mediumRiskKeywords.some(k => lowerText.includes(k))) return RiskLevel.MEDIUM;
+  const t = text.toLowerCase();
+  if (['cháy', 'nổ', 'độc', 'quyết định'].some(k => t.includes(k))) return RiskLevel.HIGH;
+  if (['kiểm tra', 'qc', 'nhập liệu'].some(k => t.includes(k))) return RiskLevel.MEDIUM;
   return RiskLevel.LOW;
 };
