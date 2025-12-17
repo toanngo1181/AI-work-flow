@@ -60,6 +60,11 @@ export const getUserDiagrams = async (userId: string): Promise<SavedDiagram[]> =
       // Expected API data item: { id, name, flowData, updatedAt }
       return result.data.map((item: any) => {
         try {
+          if (!item.flowData || typeof item.flowData !== 'string' || item.flowData === "undefined" || item.flowData === "null") {
+             // console.warn("Skipping invalid diagram data:", item);
+             return null;
+          }
+
           const parsedFlow = JSON.parse(item.flowData);
           return {
             id: item.id,
@@ -71,7 +76,7 @@ export const getUserDiagrams = async (userId: string): Promise<SavedDiagram[]> =
             aiAnalysis: parsedFlow.aiAnalysis
           };
         } catch (err) {
-          console.error("Error parsing diagram data", err);
+          console.error("Error parsing diagram data for item:", item.id, err);
           return null;
         }
       }).filter((d: any) => d !== null) as SavedDiagram[];

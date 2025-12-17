@@ -1,70 +1,122 @@
-// File: services/gemini.ts
-
-const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY; 
+import { GoogleGenAI } from "@google/genai";
+import { AIWorkflowResponse, RiskLevel } from '../types';
 
 export const SYSTEM_INSTRUCTION = `
-Bạn là chuyên gia quy trình. Nhiệm vụ của bạn là chuyển văn bản người dùng thành JSON.
-BẮT BUỘC trả về JSON theo đúng cấu trúc này:
+Bạn là chuyên gia về "Business Process Management" (BPMN) & Hệ thống hóa quy trình.
+
+NHIỆM VỤ:
+Phân tích yêu cầu của người dùng và trả về dữ liệu JSON để vẽ lưu đồ quy trình.
+
+CẤU TRÚC JSON BẮT BUỘC (Strict JSON):
 {
-  "layoutType": "flow",
-  "currentFlow": { 
-    "nodes": [{"id": "1", "data": {"label": "Bước 1"}, "position": {"x": 0, "y": 0}}], 
-    "edges": [] 
+  "layoutType": "flow" | "cycle" | "tree" | "steps",
+  "optimizationReasoning": "Giải thích ngắn gọn tại sao đề xuất cải tiến này...",
+  "riskAnalysis": {
+    "score": number (0-100),
+    "riskSummary": "Tóm tắt rủi ro..."
+  },
+  "currentFlow": {
+    "nodes": [
+      {
+        "id": "1",
+        "label": "Tên bước (Ngắn gọn)",
+        "type": "START" | "PROCESS" | "DECISION" | "END",
+        "description": "Mô tả chi tiết bước này làm gì...",
+        "riskLevel": "LOW" | "MEDIUM" | "HIGH",
+        "kpis": [{"label": "Time", "value": "5m"}],
+        "auditStep": "Nội dung cần kiểm tra (nếu có)",
+        "iconName": "Tên Icon Lucide React phù hợp (VD: User, FileText, CheckCircle)"
+      }
+    ],
+    "edges": [
+      {
+        "source": "1",
+        "target": "2",
+        "label": "Nhãn đường nối (nếu có, VD: 'Đồng ý')",
+        "sentiment": "positive" | "negative" | "neutral"
+      }
+    ]
   },
   "optimizedFlow": { 
-    "nodes": [{"id": "1", "data": {"label": "Bước 1"}, "position": {"x": 0, "y": 0}}], 
-    "edges": [] 
-  },
-  "optimizationReasoning": "Lý do tối ưu...",
-  "riskAnalysis": { "score": 10, "riskSummary": "Ổn định" }
+     // Cấu trúc tương tự currentFlow nhưng thêm các bước kiểm tra (DECISION) và xử lý lỗi
+  }
 }
+
+QUY TẮC LOGIC:
+1. Luôn bắt đầu bằng node START và kết thúc bằng node END.
+2. Nếu quy trình có rủi ro (RiskLevel = HIGH), hãy thêm node DECISION ngay sau đó để kiểm tra (QC).
+3. OptimizedFlow PHẢI khác CurrentFlow: thêm các bước kiểm soát, phê duyệt.
+
+CHỈ TRẢ VỀ JSON, KHÔNG KÈM TEXT GIẢI THÍCH BÊN NGOÀI.
 `;
 
-export const generateWorkflow = async (text: string) => {
-  if (!API_KEY) return null;
+export const generateWorkflow = async (text: string): Promise<AIWorkflowResponse | null> => {
+  // Lấy API Key từ môi trường (được inject bởi Google AI Studio)
+  const apiKey = process.env.API_KEY;
+  
+  // Lưu ý: Không alert ở đây để tránh làm phiền người dùng nếu key chưa sẵn sàng (UI sẽ xử lý việc hỏi key)
+  if (!apiKey) {
+    console.warn("⚠️ API Key chưa sẵn sàng trong process.env");
+    return null;
+  }
 
   try {
-    // Sử dụng endpoint chuẩn v1
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+    const ai = new GoogleGenAI({ apiKey });
     
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ 
-          parts: [{ text: SYSTEM_INSTRUCTION + "\n\nQuy trình người dùng cần: " + text }] 
-        }],
-        // Loại bỏ response_mime_type nếu gây lỗi 400, thay bằng cấu hình an toàn
-        generationConfig: {
-          temperature: 0.1, // Giảm độ sáng tạo để AI bám sát JSON
-          topP: 0.95,
-          topK: 40,
-          maxOutputTokens: 2048,
-        }
-      })
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: text,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        // responseMimeType: 'application/json', // Tắt tạm thời để tránh lỗi format strict của model, ta sẽ parse thủ công
+        temperature: 0.4, // Giảm nhiệt độ để kết quả nhất quán hơn
+      }
     });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error("Lỗi Google API:", errorData);
-      return null;
+    const textData = response.text;
+
+    if (!textData) throw new Error("AI không trả về dữ liệu.");
+
+    // --- ROBUST JSON PARSING ---
+    // Tìm vị trí bắt đầu '{' và kết thúc '}' để loại bỏ text thừa (như ```json ...)
+    const jsonMatch = textData.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        throw new Error("Không tìm thấy cấu trúc JSON hợp lệ trong phản hồi của AI.");
+    }
+    
+    const cleanedJson = jsonMatch[0];
+    const data = JSON.parse(cleanedJson);
+    
+    // Validate data structure basic
+    if (!data.currentFlow || !data.currentFlow.nodes) {
+        throw new Error("Cấu trúc JSON thiếu currentFlow hoặc nodes.");
     }
 
-    const result = await response.json();
-    let jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!jsonText) return null;
-
-    // Làm sạch dữ liệu: Xóa các ký tự thừa như ```json ... ``` nếu AI tự thêm vào
-    jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-    return JSON.parse(jsonText);
+    return {
+        layoutType: data.layoutType || 'flow',
+        currentFlow: data.currentFlow,
+        optimizedFlow: data.optimizedFlow || data.currentFlow, // Fallback nếu không có optimized
+        optimizationReasoning: data.optimizationReasoning || "Tối ưu hóa tiêu chuẩn.",
+        riskAnalysis: data.riskAnalysis || { score: 50, riskSummary: 'Chưa có đánh giá chi tiết.' }
+    } as AIWorkflowResponse;
 
   } catch (error) {
-    console.error("🚨 Lỗi xử lý:", error);
-    return null;
+    console.error("🚨 Gemini API Error:", error);
+    // Throw error để UI nhận biết và hiển thị thông báo
+    throw error;
   }
 };
 
-export const generateKPIsForNode = () => [];
-export const detectRiskLevel = () => 'LOW';
+export const generateKPIsForNode = (label: string) => {
+  return [
+    { label: 'Thời gian', value: `${Math.floor(Math.random() * 60)}p` },
+    { label: 'Chi phí', value: `${Math.floor(Math.random() * 100)}$` }
+  ];
+};
+
+export const detectRiskLevel = (text: string): RiskLevel => {
+  const t = text.toLowerCase();
+  if (['cháy', 'nổ', 'độc', 'quyết định', 'phê duyệt', 'tiền'].some(k => t.includes(k))) return RiskLevel.HIGH;
+  if (['kiểm tra', 'qc', 'nhập liệu', 'xác nhận'].some(k => t.includes(k))) return RiskLevel.MEDIUM;
+  return RiskLevel.LOW;
+};

@@ -29,14 +29,8 @@ const InfographicNode = ({ id, data, selected }: NodeProps<ProcessNodeData>) => 
   const handleGenerateArt = async (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent node selection toggle
     
-    // Check API Key existence (mock check via window or just try)
-    const win = window as any;
-    if (win.aistudio) {
-       const hasKey = await win.aistudio.hasSelectedApiKey();
-       if (!hasKey) {
-           await win.aistudio.openSelectKey();
-       }
-    }
+    // REMOVED: Automatic key prompt popup.
+    // If key is missing, image gen will return null or user should config in settings.
 
     setIsGeneratingArt(true);
     try {
@@ -48,6 +42,9 @@ const InfographicNode = ({ id, data, selected }: NodeProps<ProcessNodeData>) => 
                 }
                 return n;
             }));
+        } else {
+            // Optional: Show toast or small error if needed, but avoid blocking UI
+            console.warn("Could not generate illustration (Check API Key)");
         }
     } catch (err) {
         console.error("Failed to generate art", err);
